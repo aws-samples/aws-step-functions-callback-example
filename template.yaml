@@ -1,0 +1,326 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: SAM Template for Step Functions callback pattern example
+Parameters:
+  CallbackEmail:
+    Type: String
+    Description: Email for callback notification
+Resources:
+  StepFunctionsExecuteRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess
+      - arn:aws:iam::aws:policy/CloudWatchEventsFullAccess
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: "Allow"
+          Principal:
+            Service: "states.amazonaws.com"
+          Action: "sts:AssumeRole"
+      Path: "/"
+      Policies:
+      - PolicyName: StatesExecutionPolicy
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+          - Effect: Allow
+            Action:
+            - "lambda:InvokeFunction"
+            Resource: "*"
+
+  APIGatewayLambdaExecuteRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: "Allow"
+          Principal:
+            Service: { 'Fn::Sub': 'apigateway.amazonaws.com' }
+          Action: "sts:AssumeRole"
+      Path: "/"
+      Policies:
+      - PolicyName: LambdaExecutionPolicy
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+          - Effect: Allow
+            Action:
+            - "lambda:InvokeFunction"
+            Resource: "*"
+
+  LambdaExecutionRole:
+    Properties:
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: ['sts:AssumeRole']
+          Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+        Version: '2012-10-17'
+      Policies:
+      - PolicyName: lambdaRoleAPIG
+        PolicyDocument:
+          Statement:
+          - Action: ['cloudwatch:*', 'logs:*', 'sns:Publish', 'dynamodb:Query', 'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem']
+            Effect: Allow
+            Resource: '*'
+          Version: '2012-10-17'
+      - PolicyName: StatesExecutePolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'states:*'
+            Resource: '*'
+    Type: AWS::IAM::Role
+
+  OrderApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: "v1"
+      TracingEnabled: true
+      MethodSettings:
+      - DataTraceEnabled: true
+        HttpMethod: '*'
+        ResourcePath: '/*'
+        MetricsEnabled: true
+      EndpointConfiguration: "REGIONAL"
+      DefinitionBody:
+        swagger: "2.0"
+        info:
+          version: "2018-10-02T12:08:57Z"
+          title: "CallbackPattern"
+        basePath: "/v1"
+        schemes:
+        - "https"
+        paths:
+          /externalCallback:
+            post:
+              operationId: "setExternalTaskStatus"
+              consumes:
+                - "application/json"
+              produces:
+                - "application/json"
+              parameters:
+                - in: "body"
+                  name: "ExternalCallbackRequest"
+                  required: true
+                  schema:
+                    $ref: "#/definitions/ExternalCallbackTaskStatusRequest"
+              responses:
+                "200":
+                  description: "Task status sent successfully"
+                "400":
+                  description: "Invalid request"
+                "500":
+                  description: "Internal server error"
+              security:
+                - sigv4: []
+              x-amazon-apigateway-request-validator: "Validate body"
+              x-amazon-apigateway-integration:
+                credentials: { 'Fn::GetAtt': [ APIGatewayLambdaExecuteRole, Arn ] }
+                uri: { "Fn::Join": ["", ["arn:aws:apigateway:", {"Ref": "AWS::Region"}, ":lambda:path/2015-03-31/functions/", { 'Fn::GetAtt': [ ExternalCallbackFunction, Arn ] }, "/invocations" ]] }
+                requestTemplates:
+                  application/json: "$input.body"
+                responses:
+                  default:
+                    statusCode: "200"
+                  .*Bad Request.*:
+                    statusCode: "400"
+                    responseTemplates:
+                      application/json: "#set($inputRoot = $input.path('$')) { 'message' : $input.json('$.errorMessage') }"
+                passthroughBehavior: "when_no_templates"
+                httpMethod: "POST"
+                contentHandling: "CONVERT_TO_TEXT"
+                type: "aws"
+        securityDefinitions:
+          sigv4:
+            type: "apiKey"
+            name: "Authorization"
+            in: "header"
+            x-amazon-apigateway-authtype: "awsSigv4"
+        definitions:
+          ExternalCallbackTaskStatusRequest:
+            type: "object"
+            required:
+            - "order_id"
+            - "task_type"
+            - "task_status"
+            properties:
+              order_id:
+                type: "string"
+              task_type:
+                $ref: "#/definitions/ExternalCallbackTaskType"
+              task_status:
+                $ref: "#/definitions/ExternalCallbackTaskStatus"
+              task_output:
+                type: "object"
+                additionalProperties: true
+              task_error:
+                type: "object"
+                additionalProperties: true
+              task_cause:
+                type: "object"
+                additionalProperties: true
+          ExternalCallbackTaskStatus:
+            type: "string"
+            enum:
+              - "SUCCEEDED"
+              - "FAILED"
+          ExternalCallbackTaskType:
+            type: "string"
+            enum:
+              - "ORDER_SHIPPING_SERVICE"
+          Empty:
+            type: "object"
+            title: "Empty Schema"
+        x-amazon-apigateway-request-validators:
+          Validate body:
+            validateRequestParameters: false
+            validateRequestBody: true
+          Validate parameters:
+            validateRequestParameters: true
+            validateRequestbody: false
+
+  GetOrderMetadataFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/handlers
+      Handler: get_order_metadata_handler.get_order_metadata
+      Runtime: python3.7
+      Environment:
+        Variables:
+          ORDER_TABLE: !Ref OrderTable
+      Role:
+        !GetAtt LambdaExecutionRole.Arn
+
+  SNSCallbackFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/handlers/
+      Handler: sns_callback_handler.sns_callback
+      Runtime: python3.7
+      Environment:
+        Variables:
+          CALLBACK_TABLE: !Ref CallbackTable
+          SNS_TOPIC_ARN: !Ref ShippingServiceTopic
+          PAYLOAD_EVENT_KEY: "order_contents"
+          TASK_TYPE: "ORDER_SHIPPING_SERVICE"
+      Role:
+        !GetAtt LambdaExecutionRole.Arn
+
+  ExternalCallbackFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/handlers/
+      Handler: external_callback_handler.external_callback
+      Runtime: python3.7
+      Environment:
+        Variables:
+          CALLBACK_TABLE: !Ref CallbackTable
+      Role:
+        !GetAtt LambdaExecutionRole.Arn
+
+  ProcessShippingResultFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/handlers
+      Handler: process_shipping_result_handler.process_shipping_result
+      Runtime: python3.7
+      Environment:
+        Variables:
+          ORDER_TABLE: !Ref OrderTable
+          SHIPPING_INFO_EVENT_KEY: "shipping_info"
+      Role:
+        !GetAtt LambdaExecutionRole.Arn
+
+  OrderTable:
+    Type: "AWS::DynamoDB::Table"
+    Properties:
+      TableName: "OrderTable"
+      AttributeDefinitions:
+        - AttributeName: "order_id"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "order_id"
+          KeyType: "HASH"
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+
+  CallbackTable:
+    Type: "AWS::DynamoDB::Table"
+    Properties:
+      TableName: "CallbackTable"
+      AttributeDefinitions:
+        - AttributeName: "order_id"
+          AttributeType: "S"
+        - AttributeName: "task_type"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "order_id"
+          KeyType: "HASH"
+        - AttributeName: "task_type"
+          KeyType: "RANGE"
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+
+  CallbackExampleWorkflow:
+    Type: AWS::StepFunctions::StateMachine
+    Properties: 
+      DefinitionString:
+        !Sub |
+        {
+          "StartAt": "Get Order Metadata",
+          "States": {
+            "Get Order Metadata": {
+              "Type": "Task",
+              "Resource": "${GetOrderMetadataFunction.Arn}",
+              "ResultPath": "$.order_contents",
+              "Next": "Shipping Service Callback"
+            },
+            "Shipping Service Callback": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+              "Parameters": {
+                "FunctionName": "${SNSCallbackFunction.Arn}",
+                "Payload": {
+                  "token.$": "$$.Task.Token",
+                  "input.$": "$",
+                  "callback": "true"
+                }
+              },
+              "ResultPath": "$.shipping_info",
+              "Next": "Process Shipping Results"
+            },
+            "Process Shipping Results": {
+              "Type": "Task",
+              "Resource": "${ProcessShippingResultFunction.Arn}",
+              "ResultPath": "$",
+              "End": true
+            }
+          }
+        }
+      RoleArn:
+        !GetAtt StepFunctionsExecuteRole.Arn
+
+  ShippingServiceTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: ShippingServiceTopic
+
+  CallbackSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !Ref CallbackEmail
+      Protocol: email
+      TopicArn: !Ref ShippingServiceTopic
