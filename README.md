@@ -1,5 +1,5 @@
 ## aws-step-functions-callback-example
-This sample application accompanies the AWS Compute Blog post [Integrating Step Functions Callbacks and External Systems](TODO:updatelinktopublishedblogpost)
+This sample application accompanies the AWS Compute Blog post [Integrating Step Functions Callbacks and External Systems](https://aws.amazon.com/blogs/compute/integrating-aws-step-functions-callbacks-and-external-systems/)
 ### Deploying the Example Application
 1) Install [AWS SAM](https://aws.amazon.com/serverless/sam/)
 2) Ensure your AWS credentials are correctly configured
