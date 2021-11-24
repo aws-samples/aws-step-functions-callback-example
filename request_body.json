@@ -1,0 +1,9 @@
+{
+    "order_id": "order-123",
+    "task_type": "ORDER_SHIPPING_SERVICE",
+    "task_status": "SUCCEEDED",
+    "task_output": {
+        "shipping_status": "PROCESSING",
+        "tracking_number": "1ZA1B2C3D4"
+    }
+}
