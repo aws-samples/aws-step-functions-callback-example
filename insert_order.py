@@ -1,9 +1,9 @@
 import boto3
 
 order = {
-    "order_id": {"S": "order-1234"},
+    "order_id": {"S": "order-123"},
     "tracking_number": {"S": "1ZA1B2C3D4"},
-    "order_contents": {"M": {"shoes": {"N": "5"}, "socks": {"N": "2"}}},
+    "order_contents": {"M": {"shoes": {"N": "5"}, "socks": {"N": "2"}}}
 }
 
 
