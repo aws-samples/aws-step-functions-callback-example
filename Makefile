@@ -15,6 +15,7 @@ deploy: check-environment-variables
 	--stack-name aws-step-functions-callback-example \
 	--capabilities CAPABILITY_IAM \
 	--parameter-overrides CallbackEmail=${CALLBACK_EMAIL}
+	python3 ./insert_order.py
 
 destroy:
 	aws cloudformation delete-stack --stack-name aws-step-functions-callback-example
