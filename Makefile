@@ -19,4 +19,3 @@ deploy: check-environment-variables
 
 destroy:
 	aws cloudformation delete-stack --stack-name aws-step-functions-callback-example
-	
