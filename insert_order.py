@@ -20,4 +20,4 @@ try:
     else:
         dynamo_client.put_item(TableName="OrderTable", Item=order)
 except:
-    print("Error writing item to table")
+    print("Error writing item to table, insert record manually.")
